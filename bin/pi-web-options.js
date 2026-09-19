@@ -8,9 +8,24 @@ const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const CLI_OPTIONS = {
   port: { type: "string", short: "p" },
   hostname: { type: "string", short: "H" },
+  remote: { type: "string" },
   "no-open": { type: "boolean" },
   help: { type: "boolean", short: "h" },
 };
+
+const REMOTE_MODES = new Set(["", "cloudflare", "tailscale", "both"]);
+
+function normalizeRemoteMode(value) {
+  if (value === undefined) return undefined;
+  const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!REMOTE_MODES.has(mode)) {
+    throw new Error(
+      `Invalid --remote value "${value}". Use: cloudflare (default), tailscale, or both.`,
+    );
+  }
+  // --remote with no value means the default cloudflared-only mode.
+  return mode || "cloudflare";
+}
 
 function isEnabled(value) {
   return typeof value === "string" && TRUE_VALUES.has(value.trim().toLowerCase());
@@ -37,6 +52,10 @@ Start the Pi Web UI server.
 Options:
   -p, --port <port>          Server port (default: 30141, or PORT)
   -H, --hostname <host>      Bind hostname (default: 127.0.0.1, or PI_WEB_HOSTNAME)
+      --remote[=mode]        Expose pi-web remotely. mode: cloudflare (default,
+                             spawns a cloudflared quick tunnel), tailscale
+                             (bind the Tailscale IP, tailnet only), or both.
+                             Requires PI_WEB_PASSWORD (auto-generated if unset).
       --no-open              Do not open a browser automatically
   -h, --help                 Show this help message and exit
 
@@ -56,7 +75,9 @@ function parseLaunchOptions(args = process.argv.slice(2), env = process.env) {
   let positionals;
   try {
     ({ values, positionals } = parseArgs({
-      args,
+      // A bare `--remote` means the default cloudflared mode; parseArgs
+      // rejects valueless string options, so normalize it first.
+      args: args.map((arg) => (arg === "--remote" ? "--remote=cloudflare" : arg)),
       options: CLI_OPTIONS,
       strict: true,
       allowPositionals: true,
@@ -72,6 +93,11 @@ function parseLaunchOptions(args = process.argv.slice(2), env = process.env) {
     return { help: true };
   }
 
+  const remote = normalizeRemoteMode(values.remote);
+  if (remote !== undefined) {
+    values.remote = remote;
+  }
+
   if (positionals.length > 0) {
     throw new Error(
       `Unexpected argument(s): ${positionals.join(" ")}\nUse --help to see available options.`,
@@ -82,6 +108,7 @@ function parseLaunchOptions(args = process.argv.slice(2), env = process.env) {
     help: false,
     port: normalizePort(values.port ?? env.PORT ?? "30141"),
     hostname: values.hostname ?? env.PI_WEB_HOSTNAME ?? "127.0.0.1",
+    remote: values.remote,
     openBrowser: !values["no-open"] && !isEnabled(env.PI_WEB_NO_OPEN),
   };
 }
