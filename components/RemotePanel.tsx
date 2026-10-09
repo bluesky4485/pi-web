@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { copyText } from "@/lib/clipboard";
+import { useI18n } from "@/hooks/useI18n";
 
 interface RemoteStatus {
   urls: string[];
@@ -9,18 +10,19 @@ interface RemoteStatus {
   cloudflaredAvailable: boolean;
 }
 
-const EMOJI: Record<string, string> = {
-  PASSWORD_REQUIRED: "Set PI_WEB_PASSWORD at startup, then restart.",
-  ALREADY_ACTIVE: "Remote is already active.",
-  TIMEOUT: "Timed out waiting for cloudflared.",
-  SPAWN: "Could not start cloudflared.",
-  EXITED: "cloudflared exited before creating a tunnel.",
+const ERROR_KEY_BY_CODE: Record<string, string> = {
+  PASSWORD_REQUIRED: "remote.error.passwordRequired",
+  ALREADY_ACTIVE: "remote.error.alreadyActive",
+  TIMEOUT: "remote.error.timeout",
+  SPAWN: "remote.error.spawn",
+  EXITED: "remote.error.exited",
 };
 
 // Sidebar footer button for remote access. Shows the active remote URL(s), and
 // lets a locally-authenticated user start/stop a cloudflared tunnel. Starts
 // require PI_WEB_PASSWORD to have been set at startup (never managed here).
 export function RemotePanel() {
+  const { t } = useI18n();
   const [status, setStatus] = useState<RemoteStatus | null>(null);
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
@@ -50,10 +52,11 @@ export function RemotePanel() {
       const response = await fetch("/api/remote", { method: "POST" });
       const data = (await response.json()) as { error?: string; code?: string };
       if (!response.ok) {
-        setError(data.code ? (EMOJI[data.code] ?? data.error ?? "Start failed") : (data.error ?? "Start failed"));
+        const keyed = data.code ? ERROR_KEY_BY_CODE[data.code] : undefined;
+        setError(keyed ? t(keyed) : data.error ?? t("remote.error.startFailed"));
       }
     } catch {
-      setError("Could not start remote.");
+      setError(t("remote.error.couldNotStart"));
     } finally {
       setBusy(false);
       void refresh();
@@ -66,7 +69,7 @@ export function RemotePanel() {
     try {
       await fetch("/api/remote", { method: "DELETE" });
     } catch {
-      setError("Could not stop remote.");
+      setError(t("remote.error.couldNotStop"));
     } finally {
       setBusy(false);
       void refresh();
@@ -95,13 +98,20 @@ export function RemotePanel() {
     && status.passwordSet
     && status.cloudflaredAvailable;
 
+  const disabledReason = (current: RemoteStatus): string | undefined => {
+    if (current.active) return t("remote.disabled.active");
+    if (!current.passwordSet) return t("remote.disabled.noPassword");
+    if (!current.cloudflaredAvailable) return t("remote.disabled.noCloudflared");
+    return undefined;
+  };
+
   return (
     <>
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        title={status?.active ? "Remote active" : "Remote access"}
-        aria-label="Remote access"
+        title={status?.active ? t("remote.activeTitle") : t("remote.title")}
+        aria-label={t("remote.title")}
         style={
           status?.active
             ? { ...buttonStyle, color: "var(--accent)" }
@@ -120,7 +130,7 @@ export function RemotePanel() {
           <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
           <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
         </svg>
-        <span>Remote</span>
+        <span>{t("common.remote")}</span>
       </button>
       {open && (
         <div
@@ -133,11 +143,11 @@ export function RemotePanel() {
           }}
         >
           <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>
-            Remote access
+            {t("remote.title")}
           </div>
 
           {status === null && (
-            <div style={{ fontSize: 12, color: "var(--text-dim)" }}>Loading…</div>
+            <div style={{ fontSize: 12, color: "var(--text-dim)" }}>{t("i18n.loading")}</div>
           )}
 
           {status && status.active && status.urls.length > 0 && (
@@ -160,7 +170,7 @@ export function RemotePanel() {
                     onClick={() => void handleCopy(url)}
                     style={actionStyle}
                   >
-                    {copied === url ? "Copied" : "Copy"}
+                    {copied === url ? t("i18n.copied") : t("i18n.copy")}
                   </button>
                 </div>
               ))}
@@ -171,12 +181,12 @@ export function RemotePanel() {
                   disabled={busy}
                   style={actionStyle}
                 >
-                  {busy ? "Stopping…" : "Stop remote"}
+                  {busy ? t("remote.stopping") : t("remote.stop")}
                 </button>
               )}
               {!status.uiManaged && (
                 <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
-                  Started via CLI (--remote). Stopped when pi-web exits.
+                  {t("remote.startedViaCli")}
                 </div>
               )}
             </>
@@ -191,16 +201,16 @@ export function RemotePanel() {
                 title={disabledReason(status)}
                 style={{ ...actionStyle, fontWeight: 600 }}
               >
-                {busy ? "Starting…" : "Start remote"}
+                {busy ? t("remote.starting") : t("remote.start")}
               </button>
               {!status.passwordSet && (
                 <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
-                  Set PI_WEB_PASSWORD at startup and restart to enable remote.
+                  {t("remote.passwordRequired")}
                 </div>
               )}
               {status.passwordSet && !status.cloudflaredAvailable && (
                 <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
-                  Install the cloudflared CLI (winget install cloudflared).
+                  {t("remote.cloudflaredRequired")}
                 </div>
               )}
             </>
@@ -220,10 +230,3 @@ const actionStyle: CSSProperties = {
   background: "var(--bg-hover)", color: "var(--text)",
   border: "1px solid var(--border)", borderRadius: 6,
 };
-
-function disabledReason(status: RemoteStatus): string | undefined {
-  if (status.active) return "Remote is active";
-  if (!status.passwordSet) return "Set PI_WEB_PASSWORD at startup";
-  if (!status.cloudflaredAvailable) return "Install cloudflared CLI";
-  return undefined;
-}
