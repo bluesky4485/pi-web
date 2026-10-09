@@ -23,6 +23,8 @@ const { getNextNodeArgs } = require("./pi-web-node-args");
 const { wireChildProcessLifecycle } = require("./process-lifecycle");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const remote = require("./remote");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { rotatePreviewSecrets, getRotationWarning } = require("./rotate-preview-secrets");
 
 async function main() {
   let launchOptions;
@@ -66,6 +68,14 @@ async function main() {
   if (!fs.existsSync(nextDir)) {
     console.error("Build artifacts not found. Please report this issue.");
     process.exit(1);
+  }
+
+  // Replace the published preview-mode secrets with fresh random values so the
+  // previewModeId baked into the npm tarball cannot be used to skip the proxy
+  // (via the x-prerender-revalidate header). Must happen before `next start`.
+  const rotation = rotatePreviewSecrets(nextDir);
+  if (!rotation.ok) {
+    console.warn(getRotationWarning(rotation.reason));
   }
 
   // --- Remote mode setup ---------------------------------------------------
