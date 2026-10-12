@@ -16,7 +16,7 @@ const path = require("path");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const fs = require("fs");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { getHelpText, parseLaunchOptions } = require("./pi-web-options");
+const { getHelpText, parseCommandLine } = require("./pi-web-options");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { getNextNodeArgs } = require("./pi-web-node-args");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -25,28 +25,55 @@ const { wireChildProcessLifecycle } = require("./process-lifecycle");
 const remote = require("./remote");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { rotatePreviewSecrets, getRotationWarning } = require("./rotate-preview-secrets");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { openInBrowser } = require("./browser-opener");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { createRunRecordTracker, getOpenUrl, getRunDir } = require("./run-records");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { getPackageVersion, runCommand } = require("./pi-web-commands");
 
-async function main() {
-  let launchOptions;
-  try {
-    launchOptions = parseLaunchOptions();
-  } catch (error) {
-    fs.writeSync(
-      process.stderr.fd,
-      `${error instanceof Error ? error.message : String(error)}\n`,
-    );
+let launchOptions;
+try {
+  launchOptions = parseCommandLine();
+} catch (error) {
+  fs.writeSync(
+    process.stderr.fd,
+    `${error instanceof Error ? error.message : String(error)}\n`,
+  );
+  process.exit(1);
+}
+
+if (launchOptions.help) {
+  fs.writeSync(process.stdout.fd, getHelpText());
+  process.exit(0);
+}
+
+if (launchOptions.command === "start") {
+  startServer(launchOptions).catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
-  }
+  });
+} else {
+  runCommand(launchOptions).then(
+    exitWhenIdle,
+    (error) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      exitWhenIdle(1);
+    },
+  );
+}
 
-  if (launchOptions.help) {
-    fs.writeSync(process.stdout.fd, getHelpText());
-    process.exit(0);
-  }
+// Leave once the event loop drains instead of calling process.exit() right
+// after a fetch(): on Windows, Node.js 23 up to 24.19 / 26.6 can then abort
+// with a libuv assertion (UV_HANDLE_CLOSING, win/async.c) while background
+// work from the fetch is still winding down (#1174, nodejs/node#56645). The
+// unref'd timer only fires if something still holds the loop open.
+function exitWhenIdle(code) {
+  process.exitCode = code;
+  setTimeout(() => process.exit(code), 2_000).unref();
+}
 
-  const { port, openBrowser } = launchOptions;
-  let hostname = launchOptions.hostname;
-  const remoteMode = launchOptions.remote;
-
+async function startServer({ port, hostname, openBrowser, remote: remoteMode }) {
   const pkgDir = path.join(__dirname, "..");
   const nextDir = path.join(pkgDir, ".next");
 
@@ -143,6 +170,8 @@ async function main() {
   const loopbackHostnames = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
   const passwordEnabled = Boolean(process.env.PI_WEB_PASSWORD);
 
+  // Remote mode already puts the server behind a tunnel or the tailnet with a
+  // mandatory password, so its bind address is not the user's concern here.
   if (!loopbackHostnames.has(hostname) && !remoteMode) {
     if (passwordEnabled) {
       console.warn(
@@ -166,6 +195,20 @@ async function main() {
     env: { ...process.env, PI_WEB_HOSTNAME: hostname, PI_WEB_PORT: port },
   });
   wireChildProcessLifecycle(child);
+
+  // Port 0 lets the OS pick a port we never learn, so such a server gets no record.
+  const runRecord = createRunRecordTracker({
+    dir: getRunDir,
+    record: {
+      pid: process.pid,
+      nextPid: child.pid,
+      port: Number(port),
+      hostname,
+      url: getOpenUrl(hostname, port),
+      version: getPackageVersion(pkgDir),
+      startedAt: new Date().toISOString(),
+    },
+  });
 
   // Remote child lifecycle: cloudflared dies whenever pi-web exits; if the
   // tunnel dies first its URL is dead, so the whole thing stops.
@@ -196,7 +239,6 @@ async function main() {
     });
   }
 
-  let browserOpened = false;
   const url = `http://${hostname}:${port}`;
 
   if (remoteMode) {
@@ -211,48 +253,14 @@ async function main() {
     console.log("");
   }
 
+  let serverReady = false;
   child.stdout.on("data", (chunk) => {
     const text = chunk.toString();
     process.stdout.write(text);
-    if (openBrowser && !browserOpened && text.includes("Ready")) {
-      browserOpened = true;
-      const isWindows = process.platform === "win32";
-      const isMac = process.platform === "darwin";
-      // Avoid `shell: true` to suppress Node.js DEP0190 deprecation
-      // ("Passing args to a child process with shell option true can lead to
-      // security vulnerabilities, as the arguments are not escaped").
-      // Pass a structured argv so Node.js handles escaping instead of
-      // concatenating the args into a shell command string.
-      let opener;
-      if (isWindows) {
-        // `start` is a cmd.exe built-in, so invoke cmd directly. The empty
-        // title argument is required by `start` before the target URL.
-        opener = spawn(process.env.ComSpec || "cmd.exe", ["/c", "start", "", url], {
-          stdio: "ignore",
-          detached: true,
-        });
-      } else if (isMac) {
-        opener = spawn("open", [url], {
-          stdio: "ignore",
-          detached: true,
-        });
-      } else {
-        opener = spawn("xdg-open", [url], {
-          stdio: "ignore",
-          detached: true,
-        });
-      }
-
-      opener.on("error", (error) => {
-        console.warn(`Could not open browser automatically: ${error.message}`);
-      });
-
-      opener.unref();
+    if (!serverReady && text.includes("Ready")) {
+      serverReady = true;
+      if (port !== "0") runRecord.markReady();
+      if (openBrowser) openInBrowser(url);
     }
   });
 }
-
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
