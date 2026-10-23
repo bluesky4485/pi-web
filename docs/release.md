@@ -1,9 +1,11 @@
 # Release Checklist
 
-This repo publishes two artifacts for each release:
+One tag produces both artifacts of a release, and CI builds them:
 
-- npm package: `@agegr/pi-web`
-- GitHub Release: `agegr/pi-web`
+- npm package `@hzrshz/pi-web-remote` — `.github/workflows/npm-publish.yml`, through OIDC Trusted Publishing with provenance
+- GitHub Release on [bluesky4485/pi-web](https://github.com/bluesky4485/pi-web) with the four portable bundles — `.github/workflows/portable.yml`
+
+There is no npm token in this repository and no release script to run: pushing `v<version>` is the release. The only publish that ever happened by hand was the first one (`v1.0.0`), because a trusted publisher can only be registered on a package that already exists.
 
 Use this checklist from a clean `main` checkout.
 
@@ -15,110 +17,108 @@ git status --short --branch
 git log --oneline --decorate -5
 git rev-list --left-right --count main...origin/main
 gh auth status
-npm whoami
-node -e "const p=require('./package.json'); console.log(p.version)"
-lsof -nP -iTCP:30141 -sTCP:LISTEN
-ls .next/server/route-cache
+npm test
+node_modules/.bin/tsc --noEmit
+npm run lint
 ```
 
 Expected:
 
 - `git status` is clean, or only contains changes you intentionally plan to release.
 - `main` and `origin/main` are aligned (`0	0`).
-- GitHub is authenticated as an account that can push and create releases.
-- npm is authenticated as an account that can publish `@agegr/pi-web`.
-- No dev server is listening on 30141: the production build rewrites `.next/` and breaks a running `npm run dev`. Stop it first.
-- `.next/server/route-cache/` does not exist. An e2e run in `start` mode writes it (`next start` does, the build does not), and it would be published. Delete it if present.
+- GitHub is authenticated as an account that can push to this repository.
+- All three checks pass. CI runs a production build but no tests, so a red test here is never caught later.
 
-Before bumping, confirm the next version is free (replace `<version>`):
+No `npm whoami` is needed: the registry authenticates the workflow, not your machine.
 
-```bash
-npm view @agegr/pi-web@<version> version --registry https://registry.npmjs.org/   # expect E404
-git ls-remote --tags origin v<version>                                            # expect empty
-```
-
-## 2. Publish to npm
-
-Patch release:
+Before choosing a version, confirm it is free (replace `<version>`):
 
 ```bash
-npm run release
+curl -s -o /dev/null -w "%{http_code}\n" \
+  https://registry.npmjs.org/@hzrshz%2Fpi-web-remote/<version>   # 404 means free
+git ls-remote --tags origin v<version>                          # empty means free
 ```
 
-The release script runs:
+The package's version list also holds a `0.0.0-stage` entry. That is npm's staged-publishing placeholder, created by the registry when `@hzrshz/pi-web-remote` was still a new package — not a release of this app. Never compare against it and never bump over it.
+
+## 2. Choose the bump
+
+Look at `git log --oneline v<previous>..HEAD`. A batch of `feat:` commits (new UI, new commands, new settings) is a minor; fixes and small adjustments only are a patch. Decide before pushing the tag: a published version can never be reused, and the tag and `package.json` must agree or the npm job fails.
+
+## 3. Bump the version
+
+Edit `package.json`, and both version fields of `package-lock.json` — the top-level `version` and the one inside `packages[""]`:
 
 ```bash
-npm version patch --no-git-tag-version && npm run build && npm publish --access public
+node -e "
+const fs = require('node:fs');
+const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+const lock = fs.readFileSync('package-lock.json', 'utf8');
+console.log(pkg.version);
+console.log(lock.match(/\"version\": \"[^\"]+\"/g).slice(0, 2).join('\n'));
+"
 ```
 
-`npm run release` only bumps the patch number. For a minor (or major) release, set the version yourself and run the other two steps separately:
+All three must show the new version.
 
-```bash
-npm version <x.y.0> --no-git-tag-version
-npm run build
-npm publish --access public
-```
+Edit those fields rather than regenerating the lockfile with `npm install` or `npm update`: this fork's lockfile keeps some `registry.npmmirror.com` `resolved` URLs on purpose, so a regenerated lockfile is a change of its own and belongs in a commit of its own.
 
-Choosing the bump: look at `git log --oneline v<previous>..HEAD`. A batch of `feat:` commits (new UI, new commands, new settings) is a minor; only fixes and small adjustments is a patch. Decide before running the script, since a published version cannot be reused.
-
-Notes:
-
-- This bumps `package.json` and `package-lock.json`.
-- It intentionally runs a production build. Do not run `next build` during normal development; release work is the exception.
-- A newly published version may take a few minutes to show up. `npm view @agegr/pi-web@<version> version` can return E404 and `npm view @agegr/pi-web version` can show the previous version even though the publish printed `+ @agegr/pi-web@<version>`. This is registry propagation, not a failed publish: do not publish again. Poll the registry until the version appears:
-
-```bash
-curl -s https://registry.npmjs.org/@agegr%2Fpi-web/<version> | head -c 80   # JSON once it exists, "version not found" before
-npm view @agegr/pi-web dist-tags --registry https://registry.npmjs.org/
-npm view @agegr/pi-web versions --json --registry https://registry.npmjs.org/
-```
-
-## 3. Commit the Version Bump
-
-Replace `<version>` with the new package version, for example `0.7.5`.
+Nothing else carries the number — the build reads it from `package.json` (`NEXT_PUBLIC_APP_VERSION` in `next.config.ts`), and the CI build is what ships.
 
 ```bash
 git diff -- package.json package-lock.json
 git add package.json package-lock.json
-git commit -m "Release v<version>"
+git commit -m "chore(release): v<version>"
 ```
 
-## 4. Tag and Push
+## 4. Tag and push
 
 ```bash
 git tag -a v<version> -m "v<version>"
 git push origin main v<version>
 ```
 
-Push the release tag by name. Do not use `git push --tags`: the local checkout holds tags fetched from contributor forks that are not on origin, and `--tags` publishes them (it leaked a stray `v0.10.5`, on a commit that is on no branch, during the v0.11.0 release). If you ever need `--tags`, compare `git tag` with `git ls-remote --tags origin` first.
+Push the release tag by name. **Never `git push --tags`**: this checkout holds upstream's tags (`v0.8.9` … `v0.9.3` and older), and `origin` has none of them, so `--tags` would publish every one of those to your repository. When unsure, compare `git tag` with `git ls-remote --tags origin` first.
 
-Confirm the tag does not already exist before creating it when unsure:
+That single push starts both workflows.
+
+## 5. Watch CI
 
 ```bash
-git ls-remote --tags origin v<version>
-gh release view v<version> --repo agegr/pi-web
+gh run list --repo bluesky4485/pi-web --limit 5
+gh run watch <run-id> --repo bluesky4485/pi-web
 ```
 
-## 5. Generate Release Notes from Commits
+- `npm publish` takes a few minutes: build, pack, check the tarball, publish.
+- `Portable bundles` takes 10–15 minutes: four platform jobs, then a `release` job that creates the GitHub Release and attaches the bundles.
 
-Use the previous release tag as the base.
+Both jobs fail loudly on purpose. What a failure means:
+
+| Message | Meaning |
+| --- | --- |
+| `tag v<x.y.z> does not match package.json version v<a.b.c>` | Step 3 and step 4 disagree. Fix `package.json`, commit, and tag the new commit; the old tag has to be deleted locally and on origin before you can re-release that number. |
+| `the build never reached the package` | `.next` was missing from the packed tarball. The build step is broken; nothing was published. |
+| `already on the registry: nothing to publish` | Not an error. The version is already out (the by-hand first release, or a re-run), so the job succeeded without publishing. |
+| A `bundle` job fails at `Check the bundle runs on its own` | That platform's bundle would not have started offline. Nothing is attached to the release until every job passes; fix and re-run. |
+
+## 6. Release notes
+
+CI creates the release without notes, so write them once the `release` job is done. Build them from the commits, not from memory:
 
 ```bash
 git log --oneline --decorate v<previous>..v<version>
 git log --format='%h%x09%s%n%b' v<previous>..v<version>
+git log --format='%h %an | %s' v<previous>..v<version>   # authors, to thank outside contributors
 git diff --stat v<previous>..v<version>
 ```
 
-Write the release notes from those commits, not from memory. Include both Chinese and English sections. Keep commit hashes or PR numbers next to each item when useful.
+- Check every command, flag and setting name against `README.md` and the code before writing it down.
+- Open with the install and upgrade commands, and mention the portable bundles for offline machines.
+- Keep both a Chinese and an English section.
+- Pass the notes on stdin as below. A `release-notes.md` in the repo root is just an untracked file waiting to confuse the next release.
 
-- Check commands, flags and setting names against `README.md` and the code before writing them down.
-- Thank outside contributors by name: `git log --format='%h %an | %s' v<previous>..v<version>` lists authors, and the previous release's notes show the style.
-- Open with the install/upgrade command (`npm install -g @agegr/pi-web@latest`), as earlier releases did.
-- Write the notes to a file outside the repo (for example `NOTES=$(mktemp)`), or pass them through stdin as shown below. A `release-notes.md` in the repo root is an untracked file in the next release's `git status`.
-
-Suggested structure:
-
-```markdown
+```bash
+gh release edit v<version> --repo bluesky4485/pi-web --notes-file - <<'EOF'
 ## 中文
 
 基于 `v<previous>..v<version>` 的提交整理。
@@ -131,13 +131,10 @@ Suggested structure:
 
 - ...
 
-### 改进
+### 安装 / 升级
 
-- ...
-
-### 内部调整
-
-- 发布 npm 包 `@agegr/pi-web@<version>`。
+- npm：`npm install -g @hzrshz/pi-web-remote@latest`，命令为 `pi-web-remote`
+- 离线：本页底部的 `pi-web-remote-v<version>-<platform>` 压缩包，自带 Node.js 运行时
 
 ## English
 
@@ -151,64 +148,60 @@ Prepared from commits in `v<previous>..v<version>`.
 
 - ...
 
-### Improved
+### Install / update
 
-- ...
-
-### Internal
-
-- Published npm package `@agegr/pi-web@<version>`.
-```
-
-## 6. Create or Update the GitHub Release
-
-Create a new release:
-
-```bash
-gh release create v<version> \
-  --repo agegr/pi-web \
-  --verify-tag \
-  --title "v<version>" \
-  --notes-file "$NOTES"
-```
-
-If the release already exists and only the notes need updating:
-
-```bash
-gh release edit v<version> \
-  --repo agegr/pi-web \
-  --notes-file "$NOTES"
-```
-
-You can avoid a temporary file by passing notes through stdin:
-
-```bash
-gh release edit v<version> --repo agegr/pi-web --notes-file - <<'EOF'
-## 中文
-
-...
-
-## English
-
-...
+- npm: `npm install -g @hzrshz/pi-web-remote@latest`, command `pi-web-remote`
+- Offline: the `pi-web-remote-v<version>-<platform>` bundles at the bottom of this page, Node.js runtime included
 EOF
 ```
 
-## 7. Final Verification
+## 7. Final verification
 
 ```bash
-gh release view v<version> --repo agegr/pi-web
-npm view @agegr/pi-web@<version> version --registry https://registry.npmjs.org/
-npm view @agegr/pi-web dist-tags --registry https://registry.npmjs.org/
+gh release view v<version> --repo bluesky4485/pi-web
+npm view @hzrshz/pi-web-remote version --registry https://registry.npmjs.org/
+npm view @hzrshz/pi-web-remote dist-tags --registry https://registry.npmjs.org/
 git status --short --branch
-git log --oneline --decorate -3
 git ls-remote --tags origin
+```
+
+Then install what users will install, in a prefix that touches nothing else:
+
+```bash
+prefix=$(mktemp -d)
+npm install --global --prefix "$prefix" @hzrshz/pi-web-remote@<version> \
+  --registry https://registry.npmjs.org/ --no-audit --no-fund
+"$prefix/bin/pi-web-remote" --version
 ```
 
 Expected:
 
-- GitHub Release exists and is not a draft unless intentionally published as one.
-- npm exact version resolves and `latest` points at it (allow a few minutes, see step 2).
+- The release lists four assets: `linux-x64`, `linux-arm64`, `mac-arm64`, `win-x64`.
+- `latest` points at the new version. A freshly published version can take a few minutes to show up, and a mirror registry can lag behind further: that is propagation, not a failed publish — do not publish again. Poll `https://registry.npmjs.org/@hzrshz%2Fpi-web-remote/<version>` until it answers.
+- `pi-web-remote --version` prints the released version.
 - `git ls-remote --tags origin` shows no tag you did not mean to publish.
 - `main` is aligned with `origin/main`.
-- `HEAD` points at the release commit and `v<version>` tag.
+
+## 8. Manual publish (only if CI cannot)
+
+Keep this path for a broken trusted publisher; it is how `v1.0.0` went out.
+
+1. Log in to the real registry with the account that owns the `hzrshz` organization. `publishConfig.registry` in `package.json` already pins publishing to npmjs.org, so a machine-wide mirror cannot redirect it:
+   ```bash
+   npm login --registry https://registry.npmjs.org/
+   npm org ls hzrshz --registry https://registry.npmjs.org/   # your user must be there
+   ```
+2. Stop any dev server on 30141 and build for real: the published package ships `.next`, and nothing compiles on the machine that installs it.
+   ```bash
+   npm run build
+   ls .next/server/route-cache 2>/dev/null && echo "delete it: an e2e run in start mode writes this, and it would be published"
+   ```
+3. Check the tarball before sending it — a build that did not happen produces a package that is 90-odd files instead of 700+:
+   ```bash
+   tarball=$(npm pack --pack-destination /tmp | tail -1)
+   tar -tzf "/tmp/$tarball" | grep -c '^package/\.next/'
+   ```
+4. Publish, then fix the publisher so the next release comes from CI:
+   ```bash
+   npm publish --access public
+   ```
