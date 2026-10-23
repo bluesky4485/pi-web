@@ -1,4 +1,9 @@
-name: npm publish
+# The workflow is named after its own file on purpose: GitHub puts the workflow's
+# display `name` in the OIDC token's `workflow` claim, and npm compares that claim
+# against the "Workflow filename" of the Trusted Publisher record. A readable name
+# here ("npm publish") is a claim npm cannot match, and the token exchange then
+# answers 404 with nothing but "you need to be logged in".
+name: npm-publish.yml
 
 # Online install (`npm install -g @hzrshz/pi-web-remote`, `npx …`) needs this
 # package on the registry; the portable bundles in portable.yml cover offline use.
