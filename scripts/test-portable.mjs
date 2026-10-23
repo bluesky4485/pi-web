@@ -6,13 +6,17 @@
 // that cannot find its runtime, a native module missing from the production
 // install, or an app name baked into the build that never got renamed.
 //
+// Every exit path stops the server it started and forces the process out, because
+// a leftover child holds the launcher's output pipe open: without that, a failed
+// check here would hang until the CI job timed out instead of reporting anything.
+//
 // Usage: node scripts/test-portable.mjs --target linux-x64 [--out dist/portable]
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { BIN_NAME } from "../bin/app-identity.js";
@@ -20,6 +24,10 @@ import { BIN_NAME } from "../bin/app-identity.js";
 const ROOT = resolve(import.meta.dirname, "..");
 const version = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version;
 const START_TIMEOUT_MS = 120_000;
+const STOP_TIMEOUT_MS = 20_000;
+
+/** Whatever the launcher printed, kept for the failure message. */
+let launcherOutput = "";
 
 function parseArgs(argv) {
   const options = { target: "", out: join(ROOT, "dist", "portable") };
@@ -58,6 +66,48 @@ function selfContainedPath() {
     .join(separator);
 }
 
+/**
+ * Ask the launcher to stop, then make sure nothing of it is left. On Windows a
+ * plain kill ends only the cmd.exe wrapper, so the whole tree is asked there; the
+ * Next.js pid from the run record is the last resort on every platform.
+ */
+async function stopBundle(child, { isWin, nextPid }) {
+  const running = (proc) => proc !== null && proc.exitCode === null && proc.signalCode === null;
+  if (running(child)) {
+    if (isWin) spawnSync("taskkill", ["/t", "/f", "/pid", String(child.pid)], { stdio: "ignore" });
+    else child.kill("SIGTERM");
+    await Promise.race([
+      new Promise((resolved) => child.once("exit", resolved)),
+      delay(STOP_TIMEOUT_MS),
+    ]);
+    if (running(child)) child.kill("SIGKILL");
+  }
+  if (!isWin && nextPid) {
+    try {
+      process.kill(nextPid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+  }
+}
+
+/**
+ * The executable a running process really is. Next.js rewrites its process title,
+ * so a command line (`ps -o args=`) reads `next-server`; the kernel's own answer
+ * is the only one that says which node binary is serving.
+ */
+function serverExecutable(pid) {
+  if (process.platform === "linux") {
+    try {
+      return realpathSync(`/proc/${pid}/exe`);
+    } catch {
+      return null;
+    }
+  }
+  const command = spawnSync("ps", ["-p", String(pid), "-o", "comm="], { encoding: "utf8" }).stdout?.trim();
+  return command ? realpathSync(command, { strict: false }) : null;
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const bundleDir = join(options.out, `${BIN_NAME}-v${version}-${options.target}`);
@@ -80,35 +130,39 @@ async function main() {
   delete env.PI_WEB_PASSWORD;
   delete env.PORT;
 
-  let output = "";
+  const log = () => `launcher output:\n${launcherOutput}`;
   let exitInfo = null;
-  const log = () => `launcher output:\n${output}`;
+  let nextPid = null;
+  let child = null;
 
   try {
-    const child = spawn(
+    child = spawn(
       isWin ? "cmd.exe" : launcher,
       [...(isWin ? ["/d", "/c", launcher] : []), "--no-open", "--hostname", "127.0.0.1", "--port", String(port)],
       { cwd: bundleDir, env, stdio: ["ignore", "pipe", "pipe"] },
     );
-    child.stdout.on("data", (chunk) => { output += chunk; });
-    child.stderr.on("data", (chunk) => { output += chunk; });
-    const exited = new Promise((resolved) => child.once("exit", (code, signal) => {
-      exitInfo = { code, signal };
-      resolved(exitInfo);
-    }));
+    child.stdout.on("data", (chunk) => { launcherOutput += chunk; });
+    child.stderr.on("data", (chunk) => { launcherOutput += chunk; });
+    child.once("exit", (code, signal) => { exitInfo = { code, signal }; });
 
     console.log(`==> ${bundleDir}`);
     console.log(`    answering on ${url} with no node on PATH`);
     const deadline = Date.now() + START_TIMEOUT_MS;
     for (;;) {
-      if (exitInfo) throw new Error(`the launcher exited (${exitInfo.signal ?? `code ${exitInfo.code}`}) before answering\n${log()}`);
+      if (exitInfo) {
+        throw new Error(
+          `the launcher exited (${exitInfo.signal ?? `code ${exitInfo.code}`}) before answering\n${log()}`,
+        );
+      }
       try {
         const response = await fetch(url, { signal: AbortSignal.timeout(3_000) });
         if (response.ok) break;
       } catch {
         // not listening yet
       }
-      if (Date.now() > deadline) throw new Error(`no answer on ${url} within ${START_TIMEOUT_MS / 1000} s\n${log()}`);
+      if (Date.now() > deadline) {
+        throw new Error(`no answer on ${url} within ${START_TIMEOUT_MS / 1000} s\n${log()}`);
+      }
       await delay(500);
     }
 
@@ -116,39 +170,52 @@ async function main() {
     assert(page.includes(BIN_NAME), `the served page never names ${BIN_NAME}\n${log()}`);
 
     const manifest = await (await fetch(`${url}/manifest.webmanifest`)).json();
-    assert(manifest.name === BIN_NAME, `manifest name is ${manifest.name}, expected ${BIN_NAME}`);
+    assert(manifest.name === BIN_NAME, `manifest name is ${manifest.name}, expected ${BIN_NAME}\n${log()}`);
     console.log(`    app name: ${manifest.name}`);
 
-    // The launcher really runs the bundled runtime: the run record's server pid
-    // must have it as its executable (nothing else on PATH could supply a node).
+    // The launcher really runs the bundled runtime: the server pid in the run
+    // record must have it as its executable (nothing on PATH could supply a node).
     const runDir = join(agentDir, `${BIN_NAME}-run`);
     const records = (existsSync(runDir) ? readdirSync(runDir) : []).map(
       (name) => JSON.parse(readFileSync(join(runDir, name), "utf8")),
     );
-    assert(records.length === 1, `expected one run record in ${runDir}, found ${records.length}`);
+    assert(records.length === 1, `expected one run record in ${runDir}, found ${records.length}\n${log()}`);
+    nextPid = records[0].nextPid;
     if (!isWin) {
-      const args = spawnSync("ps", ["-p", String(records[0].nextPid), "-o", "args="], { encoding: "utf8" }).stdout;
-      assert(args.includes(runtimeNode), `the server is not the bundled runtime:\n${args.trim()}`);
+      const executable = serverExecutable(nextPid);
+      assert(executable !== null, `could not read the executable of server pid ${nextPid}\n${log()}`);
+      const bundleRoot = realpathSync(bundleDir);
+      assert(
+        executable.startsWith(bundleRoot + sep),
+        `the server runs ${executable}, which is outside the bundle at ${bundleRoot}\n${log()}`,
+      );
+      console.log(`    bundled runtime: ${executable}`);
+    } else {
+      console.log(`    bundled runtime: ${runtimeNode}`);
     }
-    console.log(`    bundled runtime: ${runtimeNode}`);
 
-    // A bundle must not leave a server behind: on Windows a plain kill only ends
-    // the cmd.exe wrapper, so the whole tree is asked to stop there.
-    if (isWin) spawnSync("taskkill", ["/t", "/f", "/pid", String(child.pid)], { stdio: "ignore" });
-    else child.kill("SIGTERM");
-    const stopped = await Promise.race([exited, delay(20_000).then(() => null)]);
-    assert(stopped, "the launcher did not stop within 20 s");
-    console.log(`    stopped (${stopped.signal ?? `code ${stopped.code}`})`);
-    return true;
+    await stopBundle(child, { isWin, nextPid });
+    assert(exitInfo, `the launcher did not stop within ${STOP_TIMEOUT_MS / 1000} s\n${log()}`);
+    console.log(`    stopped (${exitInfo.signal ?? `code ${exitInfo.code}`})`);
   } finally {
+    await stopBundle(child, { isWin, nextPid });
+    // A server that outlives its launcher keeps these pipes open, and an open
+    // stream is a handle this process would wait for.
+    child?.stdout?.destroy();
+    child?.stderr?.destroy();
     rmSync(agentDir, { recursive: true, force: true });
   }
 }
 
+let failed = false;
 try {
-  assert(await main(), "the bundle did not pass its checks");
+  await main();
   console.log("==> ok");
 } catch (error) {
   console.error(`==> FAIL: ${error.message}`);
-  process.exitCode = 1;
+  failed = true;
 }
+
+// Whatever is left waiting, the check has said its piece: leave after a grace
+// long enough for the output above to flush.
+setTimeout(() => process.exit(failed ? 1 : 0), 5_000).unref();

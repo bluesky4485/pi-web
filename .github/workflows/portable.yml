@@ -55,6 +55,7 @@ jobs:
       - name: Pack ${{ matrix.target }}
         run: node scripts/make-portable.mjs --target ${{ matrix.target }}
       - name: Check the bundle runs on its own
+        timeout-minutes: 10
         run: node scripts/test-portable.mjs --target ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
