@@ -1,0 +1,70 @@
+name: npm publish
+
+# Online install (`npm install -g @hzrshz/pi-web-remote`, `npx …`) needs this
+# package on the registry; the portable bundles in portable.yml cover offline use.
+#
+# One tag is one release: pushing v<version> publishes to npm here and attaches the
+# four platform bundles to that tag's GitHub Release over in portable.yml.
+#
+# No npm token is stored in this repository. The job asks GitHub for an OIDC token
+# (`id-token: write`) and npm authenticates it against the Trusted Publisher
+# registered for this repo and this workflow file, so a leaked secret cannot
+# publish. Provenance is recorded in the same step.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and check the package without publishing
+        type: boolean
+        default: true
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      # The published package ships `.next`: nothing compiles on the machine that
+      # installs it, so a build that did not happen has to fail here, not there.
+      - run: npm run build
+      - name: The version is the tag's
+        if: github.event_name == 'push'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          [ "v${version}" = "${TAG}" ] || {
+            echo "tag ${TAG} does not match package.json version v${version}"
+            exit 1
+          }
+      - name: The package carries its build output
+        run: |
+          set -euo pipefail
+          tarball="$(npm pack --pack-destination "$RUNNER_TEMP" | tail -1)"
+          listing="$(tar -tzf "$RUNNER_TEMP/$tarball")"
+          next_files="$(printf '%s\n' "$listing" | grep -c '^package/\.next/' || true)"
+          [ "$next_files" -gt 100 ] || {
+            echo "$tarball holds only ${next_files} .next files: the build never reached the package"
+            exit 1
+          }
+          for required in package/.next/BUILD_ID package/.next/required-server-files.json package/bin/pi-web.js; do
+            printf '%s\n' "$listing" | grep -qxF "$required" || { echo "$required is missing from $tarball"; exit 1; }
+          done
+          echo "$tarball: $(printf '%s\n' "$listing" | wc -l | tr -d ' ') files, $(du -h "$RUNNER_TEMP/$tarball" | cut -f1)"
+      - name: Publish
+        if: github.event_name == 'push' || inputs.dry_run == false
+        run: npm publish --access public --provenance

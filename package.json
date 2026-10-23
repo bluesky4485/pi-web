@@ -1,6 +1,6 @@
 {
   "name": "@hzrshz/pi-web-remote",
-  "version": "0.12.2",
+  "version": "1.0.0",
   "description": "Web UI for the pi coding agent with one-command remote access",
   "homepage": "https://github.com/bluesky4485/pi-web#readme",
   "repository": {
@@ -45,8 +45,7 @@
     "lint": "eslint .",
     "test:terminal": "node e2e/terminal.mjs",
     "test:e2e": "node e2e/run.mjs",
-    "test": "node --experimental-strip-types --test \"app/**/*.test.mjs\" \"components/**/*.test.mjs\" \"hooks/**/*.test.mjs\" \"lib/**/*.test.mjs\" \"bin/**/*.test.mjs\" \"public/**/*.test.mjs\"",
-    "release": "npm version patch --no-git-tag-version && npm run build && npm publish --access public"
+    "test": "node --experimental-strip-types --test \"app/**/*.test.mjs\" \"components/**/*.test.mjs\" \"hooks/**/*.test.mjs\" \"lib/**/*.test.mjs\" \"bin/**/*.test.mjs\" \"public/**/*.test.mjs\""
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.2.0",
