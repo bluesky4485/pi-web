@@ -1,6 +1,6 @@
 {
   "name": "@hzrshz/pi-web-remote",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Web UI for the pi coding agent with one-command remote access",
   "homepage": "https://github.com/bluesky4485/pi-web#readme",
   "repository": {
