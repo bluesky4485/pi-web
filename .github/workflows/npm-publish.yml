@@ -74,6 +74,21 @@ jobs:
             grep -qxF "$required" "$listing" || { echo "$required is missing from $tarball"; exit 1; }
           done
           echo "$tarball: $(wc -l < "$listing" | tr -d ' ') files, $(du -h "$RUNNER_TEMP/$tarball" | cut -f1)"
+      # npm answers a rejected publish with a bare "404 Not Found", whether the
+      # Trusted Publisher record is missing, points at another workflow file, or
+      # was given only the stage-publish permission. These are the claims npm
+      # matches that record against, so a mismatch is readable here.
+      - name: The identity npm presents
+        run: |
+          set -euo pipefail
+          curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm%3Aregistry.npmjs.org" \
+            | node -e '
+              const token = JSON.parse(require("fs").readFileSync(0, "utf8")).value;
+              const c = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString());
+              for (const k of ["repository", "repository_owner", "ref", "ref_type", "workflow", "environment"])
+                console.log(k + " = " + (c[k] ?? "(none)"));
+            '
       - name: Publish
         if: github.event_name == 'push' || inputs.dry_run == false
         run: |
@@ -86,4 +101,4 @@ jobs:
             echo "${name}@${version} is already on the registry: nothing to publish"
             exit 0
           fi
-          npm publish --access public --provenance
+          npm publish --access public --provenance --loglevel http
