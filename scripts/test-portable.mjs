@@ -92,11 +92,11 @@ async function stopBundle(child, { isWin, nextPid }) {
 }
 
 /**
- * The executable a running process really is. Next.js rewrites its process title,
- * so a command line (`ps -o args=`) reads `next-server`; the kernel's own answer
- * is the only one that says which node binary is serving.
+ * The executable a running process really is, as the OS reports it: `/proc` on
+ * Linux, `ps -o comm=` on macOS. The command line cannot be asked (`ps -o args=`)
+ * because a program is free to rewrite its own process title.
  */
-function serverExecutable(pid) {
+function processExecutable(pid) {
   if (process.platform === "linux") {
     try {
       return realpathSync(`/proc/${pid}/exe`);
@@ -105,7 +105,12 @@ function serverExecutable(pid) {
     }
   }
   const command = spawnSync("ps", ["-p", String(pid), "-o", "comm="], { encoding: "utf8" }).stdout?.trim();
-  return command ? realpathSync(command, { strict: false }) : null;
+  if (!command) return null;
+  try {
+    return realpathSync(command);
+  } catch {
+    return command;
+  }
 }
 
 async function main() {
@@ -173,25 +178,27 @@ async function main() {
     assert(manifest.name === BIN_NAME, `manifest name is ${manifest.name}, expected ${BIN_NAME}\n${log()}`);
     console.log(`    app name: ${manifest.name}`);
 
-    // The launcher really runs the bundled runtime: the server pid in the run
-    // record must have it as its executable (nothing on PATH could supply a node).
+    // The launcher really runs the bundled runtime: Next.js is spawned with
+    // `process.execPath`, so the node the launcher itself is proves the server
+    // too. The server rewrites its process title, so ask about the launcher pid.
     const runDir = join(agentDir, `${BIN_NAME}-run`);
     const records = (existsSync(runDir) ? readdirSync(runDir) : []).map(
       (name) => JSON.parse(readFileSync(join(runDir, name), "utf8")),
     );
     assert(records.length === 1, `expected one run record in ${runDir}, found ${records.length}\n${log()}`);
     nextPid = records[0].nextPid;
-    if (!isWin) {
-      const executable = serverExecutable(nextPid);
-      assert(executable !== null, `could not read the executable of server pid ${nextPid}\n${log()}`);
+    if (isWin) {
+      assert(existsSync(runtimeNode), `${runtimeNode} is missing from the bundle`);
+      console.log(`    bundled runtime: ${runtimeNode}`);
+    } else {
       const bundleRoot = realpathSync(bundleDir);
+      const executable = processExecutable(records[0].pid);
+      assert(executable !== null, `could not read the executable of launcher pid ${records[0].pid}\n${log()}`);
       assert(
         executable.startsWith(bundleRoot + sep),
-        `the server runs ${executable}, which is outside the bundle at ${bundleRoot}\n${log()}`,
+        `the launcher runs ${executable}, which is outside the bundle at ${bundleRoot}\n${log()}`,
       );
       console.log(`    bundled runtime: ${executable}`);
-    } else {
-      console.log(`    bundled runtime: ${runtimeNode}`);
     }
 
     await stopBundle(child, { isWin, nextPid });
