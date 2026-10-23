@@ -34,10 +34,25 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      # No `registry-url` here on purpose: setup-node then writes an `_authToken`
+      # line into its own userconfig, filled with a `XXXXX-XXXXX-XXXXX-XXXXX`
+      # placeholder because no token exists. npm treats that as credentials and
+      # sends it instead of exchanging the OIDC token, and the registry answers a
+      # write from an unknown token with a plain 404. `publishConfig.registry` in
+      # package.json is what pins the publish to npmjs.org.
       - uses: actions/setup-node@v4
         with:
           node-version: 22.19.0
-          registry-url: https://registry.npmjs.org
+      - name: What npm is configured to use
+        run: |
+          set -euo pipefail
+          echo "registry: $(npm config get registry)"
+          echo "publishConfig: $(node -p "JSON.stringify(require('./package.json').publishConfig)")"
+          for f in "${NPM_CONFIG_USERCONFIG:-}" "$HOME/.npmrc"; do
+            [ -n "$f" ] && [ -f "$f" ] || continue
+            echo "--- $f ---"
+            sed -E 's/(_authToken=)[A-Za-z0-9_-]{26,}/\1[redacted]/' "$f"
+          done
       # npm exchanges the OIDC token for a one-time publish token only from 11.5.1;
       # the Node 22 runtime it installs below still ships npm 10.
       - run: npm install --global npm@11
@@ -86,8 +101,8 @@ jobs:
             | node -e '
               const token = JSON.parse(require("fs").readFileSync(0, "utf8")).value;
               const c = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString());
-              for (const k of ["repository", "repository_owner", "ref", "ref_type", "workflow", "environment"])
-                console.log(k + " = " + (c[k] ?? "(none)"));
+              for (const k of Object.keys(c).sort())
+                if (typeof c[k] !== "object") console.log(k + " = " + c[k]);
             '
       - name: Publish
         if: github.event_name == 'push' || inputs.dry_run == false
