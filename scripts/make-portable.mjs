@@ -156,13 +156,15 @@ function installProductionDependencies(appDir, runtimeDir, target) {
 }
 
 function archiveBundle(bundleDir, outDir, target) {
+  // `-C` only moves where the archive's contents are read from: the `-f` name is
+  // written relative to the process directory, so it has to be the full path.
   const name = basename(bundleDir);
-  if (TARGETS[target].archive === "zip") {
-    // bsdtar ships with Windows and writes the zip directly.
-    run("tar", ["-a", "-c", "-f", `${name}.zip`, "-C", outDir, name]);
-  } else {
-    run("tar", ["-czf", `${name}.tar.gz`, "-C", outDir, name]);
-  }
+  const zip = TARGETS[target].archive === "zip";
+  const archivePath = join(outDir, `${name}.${zip ? "zip" : "tar.gz"}`);
+  const args = zip
+    ? ["-a", "-c", "-f", archivePath, "-C", outDir, name]
+    : ["-czf", archivePath, "-C", outDir, name];
+  run("tar", args);
   return name;
 }
 
