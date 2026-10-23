@@ -55,16 +55,20 @@ jobs:
         run: |
           set -euo pipefail
           tarball="$(npm pack --pack-destination "$RUNNER_TEMP" | tail -1)"
-          listing="$(tar -tzf "$RUNNER_TEMP/$tarball")"
-          next_files="$(printf '%s\n' "$listing" | grep -c '^package/\.next/' || true)"
+          # A file rather than a pipe: `grep -q` stops reading as soon as it has
+          # its answer, and under `pipefail` the writer's broken pipe would fail
+          # the step for a package that is actually fine.
+          listing="$RUNNER_TEMP/package-contents.txt"
+          tar -tzf "$RUNNER_TEMP/$tarball" > "$listing"
+          next_files="$(grep -c '^package/\.next/' "$listing" || true)"
           [ "$next_files" -gt 100 ] || {
             echo "$tarball holds only ${next_files} .next files: the build never reached the package"
             exit 1
           }
           for required in package/.next/BUILD_ID package/.next/required-server-files.json package/bin/pi-web.js; do
-            printf '%s\n' "$listing" | grep -qxF "$required" || { echo "$required is missing from $tarball"; exit 1; }
+            grep -qxF "$required" "$listing" || { echo "$required is missing from $tarball"; exit 1; }
           done
-          echo "$tarball: $(printf '%s\n' "$listing" | wc -l | tr -d ' ') files, $(du -h "$RUNNER_TEMP/$tarball" | cut -f1)"
+          echo "$tarball: $(wc -l < "$listing" | tr -d ' ') files, $(du -h "$RUNNER_TEMP/$tarball" | cut -f1)"
       - name: Publish
         if: github.event_name == 'push' || inputs.dry_run == false
         run: npm publish --access public --provenance
