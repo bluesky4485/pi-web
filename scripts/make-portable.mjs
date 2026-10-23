@@ -45,14 +45,19 @@ function keepAppFile(sourcePath) {
   return !relative.endsWith(".js.map");
 }
 
-function run(command, args, { cwd, echo = true } = {}) {
-  const result = spawnSync(command, args, { cwd, stdio: echo ? "inherit" : "ignore" });
+function run(command, args, { cwd, echo = true, stdio } = {}) {
+  const result = spawnSync(command, args, { cwd, stdio: stdio ?? (echo ? "inherit" : "ignore") });
   if (result.error) throw new Error(`${command} failed: ${result.error.message}`);
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} exited with ${result.status}`);
 }
 
+// curl writes only where the directory already exists, and its `--show-error`
+// message is the one thing that says why a download failed, so stderr stays open.
 function download(url, destPath) {
-  run("curl", ["--fail", "--silent", "--show-error", "--location", "--output", destPath, url], { echo: false });
+  mkdirSync(dirname(destPath), { recursive: true });
+  run("curl", ["--fail", "--silent", "--show-error", "--location", "--output", destPath, url], {
+    stdio: ["ignore", "ignore", "inherit"],
+  });
 }
 
 /** Check the runtime against nodejs.org's published digest: an offline install is

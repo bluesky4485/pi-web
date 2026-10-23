@@ -132,9 +132,12 @@ async function main() {
     }
     console.log(`    bundled runtime: ${runtimeNode}`);
 
-    child.kill("SIGTERM");
+    // A bundle must not leave a server behind: on Windows a plain kill only ends
+    // the cmd.exe wrapper, so the whole tree is asked to stop there.
+    if (isWin) spawnSync("taskkill", ["/t", "/f", "/pid", String(child.pid)], { stdio: "ignore" });
+    else child.kill("SIGTERM");
     const stopped = await Promise.race([exited, delay(20_000).then(() => null)]);
-    assert(stopped, "the launcher ignored SIGTERM for 20 s");
+    assert(stopped, "the launcher did not stop within 20 s");
     console.log(`    stopped (${stopped.signal ?? `code ${stopped.code}`})`);
     return true;
   } finally {
