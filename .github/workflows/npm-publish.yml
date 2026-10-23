@@ -25,6 +25,10 @@ on:
         description: Build and check the package without publishing
         type: boolean
         default: true
+      stage:
+        description: Stage the package for a person to approve, instead of publishing it
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
@@ -94,10 +98,11 @@ jobs:
             grep -qxF "$required" "$listing" || { echo "$required is missing from $tarball"; exit 1; }
           done
           echo "$tarball: $(wc -l < "$listing" | tr -d ' ') files, $(du -h "$RUNNER_TEMP/$tarball" | cut -f1)"
-      # npm answers a rejected publish with a bare "404 Not Found", whether the
-      # Trusted Publisher record is missing, points at another workflow file, or
-      # was given only the stage-publish permission. These are the claims npm
-      # matches that record against, so a mismatch is readable here.
+      # npm gives no reason when it will not accept a trusted publisher: a missing
+      # record, a record pointing at another workflow file, and a record that was
+      # never granted `npm publish` all answer the token exchange with a bare 404.
+      # These are the claims npm matches that record against, so the run log shows
+      # exactly what the record in npm's own UI has to say.
       - name: The identity npm presents
         run: |
           set -euo pipefail
@@ -110,7 +115,7 @@ jobs:
                 if (typeof c[k] !== "object") console.log(k + " = " + c[k]);
             '
       - name: Publish
-        if: github.event_name == 'push' || inputs.dry_run == false
+        if: github.event_name == 'push' || inputs.dry_run == false || inputs.stage == true
         run: |
           set -euo pipefail
           name="$(node -p "require('./package.json').name")"
@@ -121,4 +126,11 @@ jobs:
             echo "${name}@${version} is already on the registry: nothing to publish"
             exit 0
           fi
-          npm publish --access public --provenance --loglevel http
+          # Staging tells a broken record apart from a permitted-but-unhelpful one:
+          # a trusted publisher may always stage, and the package stays out of
+          # public view until a person approves it with 2FA (`npm stage list`).
+          if [ "${{ inputs.stage }}" = "true" ]; then
+            npm stage publish --access public --provenance --loglevel http
+          else
+            npm publish --access public --provenance --loglevel http
+          fi
