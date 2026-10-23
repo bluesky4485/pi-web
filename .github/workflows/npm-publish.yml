@@ -9,7 +9,9 @@ name: npm publish
 # No npm token is stored in this repository. The job asks GitHub for an OIDC token
 # (`id-token: write`) and npm authenticates it against the Trusted Publisher
 # registered for this repo and this workflow file, so a leaked secret cannot
-# publish. Provenance is recorded in the same step.
+# publish. Provenance is recorded in the same step. A trusted publisher is
+# configured on a package that already exists, so the very first publish of
+# @hzrshz/pi-web-remote stays a human `npm publish`; every version after it is this file.
 
 on:
   workflow_dispatch:
@@ -36,6 +38,9 @@ jobs:
         with:
           node-version: 22.19.0
           registry-url: https://registry.npmjs.org
+      # npm exchanges the OIDC token for a one-time publish token only from 11.5.1;
+      # the Node 22 runtime it installs below still ships npm 10.
+      - run: npm install --global npm@11
       - run: npm ci
       # The published package ships `.next`: nothing compiles on the machine that
       # installs it, so a build that did not happen has to fail here, not there.
