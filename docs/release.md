@@ -96,10 +96,25 @@ Both jobs fail loudly on purpose. What a failure means:
 
 | Message | Meaning |
 | --- | --- |
-| `tag v<x.y.z> does not match package.json version v<a.b.c>` | Step 3 and step 4 disagree. Fix `package.json`, commit, and tag the new commit; the old tag has to be deleted locally and on origin before you can re-release that number. |
+| `tag v<x.y.z> does not match package.json version v<a.b.c>` | Step 3 and step 4 disagree. Fix `package.json`, commit, and move the tag onto that commit — see below. |
 | `the build never reached the package` | `.next` was missing from the packed tarball. The build step is broken; nothing was published. |
 | `already on the registry: nothing to publish` | Not an error. The version is already out (the by-hand first release, or a re-run), so the job succeeded without publishing. |
 | A `bundle` job fails at `Check the bundle runs on its own` | That platform's bundle would not have started offline. Nothing is attached to the release until every job passes; fix and re-run. |
+| `404 Not Found - PUT https://registry.npmjs.org/@hzrshz%2fpi-web-remote`, with the provenance statement signed first | npm never asked the registry to trust it: it sent credentials of its own. The `What npm is configured to use` step must print **no** `_authToken` line — `setup-node` writes one holding the placeholder `XXXXX-XXXXX-XXXXX-XXXXX` when it is given `registry-url` and no token, and the registry reads a write from an unknown token as a package it cannot find. |
+| `POST 404 https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/...` with `ENEEDAUTH` | The registry found no Trusted Publisher for this run. `The identity npm presents` prints what the record has to match: `repository = bluesky4485/pi-web`, `workflow = npm-publish.yml` (the claim holds the workflow's display `name:`, which is why this file is named after itself), and no `environment` claim at all unless the record names one. The record is created or replaced with `npm trust` in step 8. |
+
+Staging is the tie-breaker between those two 404s: every valid record may `npm stage publish`, and only `npm publish` is a separate grant. Run the workflow by hand from `main` with the `stage` box ticked — a run that still 404s on the exchange has no matching record, so fix the record (step 8) rather than its permissions.
+
+A refused publish still leaves the version number free, so do not invent the next one. Fix the workflow, commit, and move the tag:
+
+```bash
+git tag -f -a v<version> -m "v<version>"
+git push origin --force v<version>
+```
+
+Only the tag moves, and only while nothing has been published under that number: a tag whose release reached the registry is history. Check the old commit is an ancestor of the new one first (`git merge-base --is-ancestor <old> <new>`) so the move loses no content.
+
+When only the npm side was wrong — a record fixed after the fact, a mirror hiccup — the tag is already right, so re-run the failed job instead of moving anything: `gh run rerun <run-id> --failed --repo bluesky4485/pi-web`. A re-run uses the workflow file from the tag's own commit.
 
 ## 6. Release notes
 
@@ -186,22 +201,31 @@ Expected:
 
 Keep this path for a broken trusted publisher; it is how `v1.0.0` went out.
 
-1. Log in to the real registry with the account that owns the `hzrshz` organization. `publishConfig.registry` in `package.json` already pins publishing to npmjs.org, so a machine-wide mirror cannot redirect it:
+1. Read the publisher record before republishing by hand. `npm trust` needs npm 11.15 or newer and asks for 2FA; the registry holds one record per package, so a wrong one is revoked by id and re-created:
+   ```bash
+   npm trust list @hzrshz/pi-web-remote --registry https://registry.npmjs.org/
+   npm trust revoke --id <trust-id> @hzrshz/pi-web-remote --registry https://registry.npmjs.org/
+   npm trust github @hzrshz/pi-web-remote --repo bluesky4485/pi-web --file npm-publish.yml \
+     --allow-publish --registry https://registry.npmjs.org/
+   ```
+   A trusted publisher may always `npm stage publish`; `npm publish` is a separate permission, granted when the record is made or on the package's Publishing access page. The three fields have to equal what the failed run printed under `The identity npm presents` — an `Environment name` in the record that this job never declares is as fatal as a typo in the file name. Creating or replacing a record asks for 2FA, so it stays a human step.
+
+2. Log in to the real registry with the account that owns the `hzrshz` organization. `publishConfig.registry` in `package.json` already pins publishing to npmjs.org, so a machine-wide mirror cannot redirect it:
    ```bash
    npm login --registry https://registry.npmjs.org/
    npm org ls hzrshz --registry https://registry.npmjs.org/   # your user must be there
    ```
-2. Stop any dev server on 30141 and build for real: the published package ships `.next`, and nothing compiles on the machine that installs it.
+3. Stop any dev server on 30141 and build for real: the published package ships `.next`, and nothing compiles on the machine that installs it.
    ```bash
    npm run build
    ls .next/server/route-cache 2>/dev/null && echo "delete it: an e2e run in start mode writes this, and it would be published"
    ```
-3. Check the tarball before sending it — a build that did not happen produces a package that is 90-odd files instead of 700+:
+4. Check the tarball before sending it — a build that did not happen produces a package that is 90-odd files instead of 700+:
    ```bash
    tarball=$(npm pack --pack-destination /tmp | tail -1)
    tar -tzf "/tmp/$tarball" | grep -c '^package/\.next/'
    ```
-4. Publish, then fix the publisher so the next release comes from CI:
+5. Publish, then fix the publisher so the next release comes from CI:
    ```bash
    npm publish --access public
    ```
