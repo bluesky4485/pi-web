@@ -1,14 +1,14 @@
 {
-  "name": "@agegr/pi-web",
+  "name": "@hzrshz/pi-web-remote",
   "version": "0.12.2",
-  "description": "Web UI for the pi coding agent",
-  "homepage": "https://github.com/agegr/pi-web#readme",
+  "description": "Web UI for the pi coding agent with one-command remote access",
+  "homepage": "https://github.com/bluesky4485/pi-web#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agegr/pi-web.git"
+    "url": "git+https://github.com/bluesky4485/pi-web.git"
   },
   "bugs": {
-    "url": "https://github.com/agegr/pi-web/issues"
+    "url": "https://github.com/bluesky4485/pi-web/issues"
   },
   "license": "MIT",
   "engines": {
@@ -22,7 +22,7 @@
     "ios_saf 16.2"
   ],
   "bin": {
-    "pi-web": "bin/pi-web.js"
+    "pi-web-remote": "bin/pi-web.js"
   },
   "files": [
     "bin",

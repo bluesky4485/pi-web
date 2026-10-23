@@ -1,8 +1,10 @@
 "use strict";
 
-// Records of running pi-web servers: one <agentDir>/pi-web-run/<launcher pid>.json
+// Records of running pi-web servers: one <agentDir>/pi-web-remote-run/<launcher pid>.json
 // per server, written by the launcher once Next.js is ready and removed when it
-// exits. pi-web keeps all its state in pi's agent directory, so this does too.
+// exits. pi-web keeps all its state in pi's agent directory, so this does too;
+// the folder is named after this package's own command, so a machine that also
+// runs the upstream `pi-web` never sees the other's servers in status/stop/open.
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { spawnSync } = require("child_process");
@@ -14,6 +16,8 @@ const os = require("os");
 const path = require("path");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { fileURLToPath } = require("url");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { BIN_NAME } = require("./app-identity");
 
 // pi's getAgentDir(): PI_CODING_AGENT_DIR with `~` expanded, else ~/.pi/agent.
 function getAgentDir(env = process.env, home = os.homedir()) {
@@ -26,7 +30,7 @@ function getAgentDir(env = process.env, home = os.homedir()) {
 }
 
 function getRunDir(env = process.env, home = os.homedir()) {
-  return path.join(getAgentDir(env, home), "pi-web-run");
+  return path.join(getAgentDir(env, home), `${BIN_NAME}-run`);
 }
 
 // The address a browser on this machine can open: wildcard binds become
@@ -158,13 +162,13 @@ function selectRunRecord(records, port) {
   const matching = port === undefined ? records : records.filter((record) => String(record.port) === String(port));
   if (matching.length === 1) return { record: matching[0] };
   if (matching.length === 0) {
-    return { error: port === undefined ? "No pi-web server is running." : `No pi-web server is running on port ${port}.` };
+    return { error: port === undefined ? `No ${BIN_NAME} server is running.` : `No ${BIN_NAME} server is running on port ${port}.` };
   }
   if (port !== undefined) {
-    return { error: `Several pi-web servers are running on port ${port}:\n${matching.map(formatRunRecord).join("\n")}` };
+    return { error: `Several ${BIN_NAME} servers are running on port ${port}:\n${matching.map(formatRunRecord).join("\n")}` };
   }
   return {
-    error: `Several pi-web servers are running:\n${matching.map(formatRunRecord).join("\n")}\nPass --port <port> to choose one.`,
+    error: `Several ${BIN_NAME} servers are running:\n${matching.map(formatRunRecord).join("\n")}\nPass --port <port> to choose one.`,
   };
 }
 
@@ -187,7 +191,7 @@ function createRunRecordTracker({ dir, record, parentProcess = process, warn = c
         runDir = typeof dir === "function" ? dir() : dir;
         writeRunRecord(runDir, record);
       } catch (error) {
-        warn(`[pi-web] could not write the run record (pi-web status/stop/open will not see this server): ${error.message}`);
+        warn(`[${BIN_NAME}] could not write the run record (${BIN_NAME} status/stop/open will not see this server): ${error.message}`);
         return;
       }
       parentProcess.once("exit", () => removeRunRecord(runDir, record.pid));

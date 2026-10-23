@@ -2,6 +2,8 @@
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const os = require("node:os");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { BIN_NAME } = require("./app-identity");
 
 const forwardedSignals = ["SIGINT", "SIGTERM"];
 const shutdownTimeoutMs = 5_000;
@@ -36,7 +38,7 @@ function wireChildProcessLifecycle(
   function handleError(error) {
     const failedToSpawn = child.pid === undefined;
     log(
-      `[pi-web] ${failedToSpawn ? "could not run the Next.js process" : "Next.js process error"}: ${error.message}`,
+      `[${BIN_NAME}] ${failedToSpawn ? "could not run the Next.js process" : "Next.js process error"}: ${error.message}`,
     );
 
     if (failedToSpawn) {
@@ -70,7 +72,7 @@ function wireChildProcessLifecycle(
     // the window closing with no stated reason.
     if (!shuttingDown) {
       log(
-        `[pi-web] Next.js exited unexpectedly (${signal ? `signal ${signal}` : `code ${code}`})`,
+        `[${BIN_NAME}] Next.js exited unexpectedly (${signal ? `signal ${signal}` : `code ${code}`})`,
       );
     }
 

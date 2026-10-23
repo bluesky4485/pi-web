@@ -1,4 +1,7 @@
 const SESSION_LIVENESS_PROTOCOL_VERSION = 1;
+// The registry key is the extension-facing contract documented in README.md, so
+// it stays the published package's name: an extension that looks up the liveness
+// registry by that string must find the one this app reads, fork or not.
 export const SESSION_LIVENESS_REGISTRY_KEY = "@agegr/pi-web/session-liveness/v1";
 export const SESSION_LIVENESS_LEASE_TTL_MS = 90_000;
 const SESSION_LIVENESS_LEASES_KEY = "@agegr/pi-web/session-liveness-leases/v2";

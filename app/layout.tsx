@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Noto_Sans_Mono } from "next/font/google";
 import { PwaRegistration } from "@/components/PwaRegistration";
+import { APP_NAME } from "@/lib/app-identity";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import "katex/dist/katex.min.css";
 import "./globals.css";
@@ -15,9 +16,9 @@ const notoSansMono = Noto_Sans_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Pi Web",
+  title: APP_NAME,
   description: "Pi Web interface for the pi coding agent",
-  applicationName: "Pi Web",
+  applicationName: APP_NAME,
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
@@ -38,7 +39,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Pi Web",
+    title: APP_NAME,
   },
   formatDetection: {
     telephone: false,

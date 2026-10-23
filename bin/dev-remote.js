@@ -1,6 +1,6 @@
 "use strict";
 
-// `npm run dev:remote` — dev-server equivalent of `pi-web --remote`:
+// `npm run dev:remote` — the dev-server equivalent of the launcher's `--remote`:
 // spawn a cloudflared quick tunnel, inject the tunnel host into the env, and
 // run `next dev`. Manually replicating what bin/pi-web.js does for production,
 // since the dev server does not go through that launcher.
@@ -15,13 +15,15 @@ const remote = require("./remote");
 const { getNextNodeArgs } = require("./pi-web-node-args");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { wireChildProcessLifecycle } = require("./process-lifecycle");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { BIN_NAME } = require("./app-identity");
 
 const PORT = process.env.PORT || "30141";
 
 async function main() {
   if (!remote.isCloudflaredAvailable()) {
     console.error(
-      "[pi-web] dev:remote requires the cloudflared CLI. Install it "
+      `[${BIN_NAME}] dev:remote requires the cloudflared CLI. Install it `
         + "(winget install cloudflared / scoop install cloudflared) and try again.",
     );
     process.exit(1);
@@ -37,7 +39,7 @@ async function main() {
   try {
     tunnel = await remote.spawnCloudflaredTunnel(`http://127.0.0.1:${PORT}`);
   } catch (error) {
-    console.error(`[pi-web] Failed to start cloudflared tunnel: ${error.message}`);
+    console.error(`[${BIN_NAME}] Failed to start cloudflared tunnel: ${error.message}`);
     process.exit(1);
   }
 
@@ -79,13 +81,13 @@ async function main() {
     if (stopping) return;
     stopping = true;
     console.error(
-      `[pi-web] cloudflared exited unexpectedly (${signal ? `signal ${signal}` : `code ${code}`}); stopping`,
+      `[${BIN_NAME}] cloudflared exited unexpectedly (${signal ? `signal ${signal}` : `code ${code}`}); stopping`,
     );
     try { child.kill(); } catch { /* already gone */ }
     process.exit(1);
   });
 
-  console.log("\n[pi-web] Remote dev session:");
+  console.log(`\n[${BIN_NAME}] Remote dev session:`);
   console.log(`  Local:  http://127.0.0.1:${PORT}`);
   console.log(`  Remote: ${tunnel.url}`);
   await remote.printQr(tunnel.url, `  Scan to open: ${tunnel.url}`);

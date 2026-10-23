@@ -31,6 +31,8 @@ const { openInBrowser } = require("./browser-opener");
 const { createRunRecordTracker, getOpenUrl, getRunDir } = require("./run-records");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { getPackageVersion, runCommand } = require("./pi-web-commands");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { BIN_NAME } = require("./app-identity");
 
 let launchOptions;
 try {
@@ -120,7 +122,7 @@ async function startServer({ port, hostname, openBrowser, remote: remoteMode }) 
 
     if (wantsCloudflare && !remote.isCloudflaredAvailable()) {
       console.error(
-        "[pi-web] --remote requires the cloudflared CLI. Install it "
+        `[${BIN_NAME}] --remote requires the cloudflared CLI. Install it `
           + "(winget install cloudflared / scoop install cloudflared) and try again.",
       );
       process.exit(1);
@@ -129,7 +131,7 @@ async function startServer({ port, hostname, openBrowser, remote: remoteMode }) 
       const tailnetIp = remote.getTailnetIp();
       if (!tailnetIp) {
         console.error(
-          "[pi-web] --remote=tailscale requires Tailscale to be connected. "
+          `[${BIN_NAME}] --remote=tailscale requires Tailscale to be connected. `
             + "Start Tailscale or use --remote=cloudflare.",
         );
         process.exit(1);
@@ -156,7 +158,7 @@ async function startServer({ port, hostname, openBrowser, remote: remoteMode }) 
           : tunnelHost;
         remoteUrls.push(tunnel.url);
       } catch (error) {
-        console.error(`[pi-web] Failed to start cloudflared tunnel: ${error.message}`);
+        console.error(`[${BIN_NAME}] Failed to start cloudflared tunnel: ${error.message}`);
         process.exit(1);
       }
     }
@@ -175,11 +177,11 @@ async function startServer({ port, hostname, openBrowser, remote: remoteMode }) 
   if (!loopbackHostnames.has(hostname) && !remoteMode) {
     if (passwordEnabled) {
       console.warn(
-        `Warning: pi-web is listening on ${hostname} with password authentication over HTTP. Use HTTPS or a trusted VPN to protect the password in transit.`,
+        `Warning: ${BIN_NAME} is listening on ${hostname} with password authentication over HTTP. Use HTTPS or a trusted VPN to protect the password in transit.`,
       );
     } else {
       console.warn(
-        `Warning: pi-web is listening on ${hostname} without authentication. Only use this on a trusted network.`,
+        `Warning: ${BIN_NAME} is listening on ${hostname} without authentication. Only use this on a trusted network.`,
       );
     }
   }
@@ -224,7 +226,7 @@ async function startServer({ port, hostname, openBrowser, remote: remoteMode }) 
     process.once("SIGINT", stopCloudflared);
     process.once("SIGTERM", stopCloudflared);
     cloudflaredChild.on("error", (error) => {
-      console.error(`[pi-web] cloudflared error: ${error.message}`);
+      console.error(`[${BIN_NAME}] cloudflared error: ${error.message}`);
       stopCloudflared();
       process.exit(1);
     });
@@ -232,7 +234,7 @@ async function startServer({ port, hostname, openBrowser, remote: remoteMode }) 
       if (stopping) return;
       stopping = true;
       console.error(
-        `[pi-web] cloudflared exited unexpectedly (${signal ? `signal ${signal}` : `code ${code}`}); stopping`,
+        `[${BIN_NAME}] cloudflared exited unexpectedly (${signal ? `signal ${signal}` : `code ${code}`}); stopping`,
       );
       try { child.kill(); } catch { /* already gone */ }
       process.exit(1);
@@ -242,7 +244,7 @@ async function startServer({ port, hostname, openBrowser, remote: remoteMode }) 
   const url = `http://${hostname}:${port}`;
 
   if (remoteMode) {
-    console.log("\n[pi-web] Remote access enabled:");
+    console.log(`\n[${BIN_NAME}] Remote access enabled:`);
     for (const remoteUrl of remoteUrls) {
       console.log(`  ${remoteUrl}`);
       await remote.printQr(remoteUrl, `  Scan to open: ${remoteUrl}`);

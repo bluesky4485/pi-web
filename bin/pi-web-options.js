@@ -2,6 +2,8 @@
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { parseArgs } = require("util");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { BIN_NAME } = require("./app-identity");
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 
@@ -55,7 +57,7 @@ const COMMAND_OPTIONS = {
 };
 
 function getHelpText() {
-  return `Usage: pi-web [command] [options]
+  return `Usage: ${BIN_NAME} [command] [options]
 
 Start the Pi Web UI server, or run one of the commands below.
 
@@ -69,7 +71,7 @@ Commands:
 Options:
   -p, --port <port>          Server port (default: 30141, or PORT)
   -H, --hostname <host>      Bind hostname (default: 127.0.0.1, or PI_WEB_HOSTNAME)
-      --remote[=mode]        Expose pi-web remotely. mode: cloudflare (default,
+      --remote[=mode]        Expose ${BIN_NAME} remotely. mode: cloudflare (default,
                              spawns a cloudflared quick tunnel), tailscale
                              (bind the Tailscale IP, tailnet only), or both.
                              Requires PI_WEB_PASSWORD (auto-generated if unset).
@@ -80,7 +82,7 @@ Environment:
   PORT                       Default port when --port is omitted
   PI_WEB_HOSTNAME            Default hostname when --hostname is omitted
   PI_WEB_NO_OPEN             Set to 1/true/yes/on to disable browser open
-  PI_WEB_APP_NAME            PWA manifest name (trimmed; default Pi Web)
+  PI_WEB_APP_NAME            PWA manifest name (trimmed; default ${BIN_NAME})
   PI_WEB_PASSWORD            Enable browser password login and API Basic Auth
   PI_WEB_ALLOWED_HOSTS       Extra exact proxy/custom hostnames, comma-separated
   PI_WEB_SKIP_VERSION_CHECK  Set to 1 to disable Pi Web update checks

@@ -1,3 +1,5 @@
+import { REPO_URL } from "./app-identity";
+
 const STABLE_VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
 
 function parseStableVersion(version: string): [number, number, number] | null {
@@ -24,5 +26,5 @@ export function isNewerStableVersion(candidate: string, current: string): boolea
 
 export function getPiWebReleaseUrl(version: string): string | null {
   if (!parseStableVersion(version)) return null;
-  return `https://github.com/agegr/pi-web/releases/tag/v${version}`;
+  return `${REPO_URL}/releases/tag/v${version}`;
 }
